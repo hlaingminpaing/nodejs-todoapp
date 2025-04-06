@@ -6,7 +6,7 @@ env:
     IMAGE_REPO_NAME: "todo-app"
     ECS_CLUSTER: "devops-cluster"
     SERVICE_NAME: "todo-service"
-    TASK_DEF_FAMILY: "todoapp-task"
+    TASK_DEF_FAMILY: "todoapptask"
 
 phases:
   pre_build:
