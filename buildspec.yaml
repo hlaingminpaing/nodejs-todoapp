@@ -38,6 +38,7 @@ phases:
       - sed -i "s|\$AWS_DEFAULT_REGION|ap-southeast-1|g" task-definition-temp.json
       - sed -i "s|\$IMAGE_REPO_NAME|$IMAGE_REPO_NAME|g" task-definition-temp.json
       - sed -i "s|\$IMAGE_TAG|$IMAGE_TAG|g" task-definition-temp.json
+      - sed -i "s|\$TASK_DEF_FAMILY|$TASK_DEF_FAMILY|g" task-definition-temp.json
       # Output the contents for debugging
       - echo "Contents of task-definition-temp.json:"
       - cat task-definition-temp.json
