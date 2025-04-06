@@ -1,11 +1,11 @@
-family: todo-app-task
+family: todoapp-task
 networkMode: awsvpc
 requiresCompatibilities:
   - FARGATE
 cpu: "256"
 memory: "512"
 containerDefinitions:
-  - name: todo-app-container
+  - name: nodejs-todoapp
     image: "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com/${IMAGE_REPO_NAME}:${IMAGE_TAG}"
     essential: true
     portMappings:
