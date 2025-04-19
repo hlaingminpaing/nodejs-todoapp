@@ -11,8 +11,16 @@ docker build -t todo-web-app .
 docker run -p 3000:3000 todo-web-app
 ```
 
-## Create ECR Repo
- Go to the [Amazon ECR console](https://console.aws.amazon.com/ecr/home).
+Here's a **step-by-step guide using the AWS Management Console (GUI)** to deploy your Dockerized To-Do application to **Amazon ECS** using **AWS CodeBuild** and **AWS CodeDeploy**.
+
+---
+
+## **Part 1: Setting Up the Environment**
+
+### Step 1: **Push Docker Image to Amazon ECR**
+
+1. **Create an ECR Repository**
+   - Go to the [Amazon ECR console](https://console.aws.amazon.com/ecr/home).
    - Click **Create repository**.
    - Enter `todo-web-app` as the repository name and click **Create repository**.
 
@@ -22,7 +30,46 @@ docker run -p 3000:3000 todo-web-app
      - Click on **View push commands** to get the commands for pushing the image.
      - Execute the commands in your terminal to build, tag, and push the image to ECR.
 
-## Building the Docker Image with CodeBuild
+---
+
+### Step 1: **Create an ECS Cluster**
+
+1. Open the [Amazon ECS console](https://console.aws.amazon.com/ecs/home).
+2. Click **Create cluster**.
+3. Select **Networking only (Fargate)** and click **Next step**.
+4. Enter `todo-app-cluster` as the cluster name and click **Create**.
+
+---
+### Step 2: **Create ECS Task Definition**
+
+1. Go to the [Task Definitions page](https://console.aws.amazon.com/ecs/home#/taskDefinitions).
+2. Click **Create new task definition** and choose **Fargate**.
+3. Configure the task:
+   - Task definition name: `todo-web-app-task`.
+   - Task role: Leave as default.
+   - Add container:
+     - Name: `todo-web-app-container`.
+     - Image: `<account_id>.dkr.ecr.<region>.amazonaws.com/todo-web-app:latest`.
+     - Port mappings: `3000` (for container port).
+4. Click **Create**.
+
+---
+### Step 3: **Create ECS Service**
+
+1. Go to the [ECS Services page](https://console.aws.amazon.com/ecs/home#/clusters).
+2. Click on the `todo-app-cluster` and click **Create service**.
+3. Configure the service:
+   - Launch type: **Fargate**.
+   - Service name: `todo-web-app-service`.
+   - Task definition: Choose the one you created.
+   - Number of tasks: `1`.
+   - VPC and subnets: Select appropriate ones.
+   - Security group: Allow HTTP traffic (port 3000).
+4. Click **Create service**.
+
+---
+
+## **Part 2: Building the Docker Image with CodeBuild**
 
 1. **Go to CodeBuild**
    - Open the [AWS CodeBuild console](https://console.aws.amazon.com/codebuild/home).
@@ -38,30 +85,13 @@ docker run -p 3000:3000 todo-web-app
      - Runtime: **Standard**.
      - Image: **aws/codebuild/standard:6.0**.
      - Check **Enable this project to build Docker images**.
-     - Add variable 
-        - AWS_DEFAULT_REGION with a value of region-ID
-        - AWS_ACCOUNT_ID with a value of account-ID
-        - IMAGE_TAG with a value of Latest
-        - IMAGE_REPO_NAME with a value of Amazon-ECR-repo-name
-        
-   - In **Buildspec**, select **Insert build commands** and use the following content or you can use buildspec.yaml
-    
-    
-   ```
-    version: 0.2
-    phases:
-        pre_build:
-            commands:
-                - echo Logging in to Amazon ECR...
-                - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com
-        build:
-            commands:
-                - echo Build started on `date`
-                - echo Building the Docker image...          
-                - docker build -t $IMAGE_REPO_NAME:$IMAGE_TAG .
-                - docker tag $IMAGE_REPO_NAME:$IMAGE_TAG $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$IMAGE_REPO_NAME:$IMAGE_TAG      
-        post_build:
-            commands:
-                - echo Build completed on `date`
-                - echo Pushing the Docker image...
-                - docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$IMAGE_REPO_NAME:$IMAGE_TAG
+   - In **Buildspec**, select **Use a buildspec file** 
+
+3. **Start the Build**
+   - Save the project and start the build.
+   - Once completed, the Docker image will be in your ECR repository.
+
+---
+
+### Create codepiple and test run
+
