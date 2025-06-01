@@ -3,10 +3,10 @@ env:
   variables:
     AWS_ACCOUNT_ID: "965080479351"
     AWS_DEFAULT_REGION: "ap-southeast-1"
-    IMAGE_REPO_NAME: "todo-app"
-    ECS_CLUSTER: "devops-cluster"
-    SERVICE_NAME: "todo-service"
-    TASK_DEF_FAMILY: "todoapptask"
+    IMAGE_REPO_NAME: "todo-web-app"
+    ECS_CLUSTER: "todo-app-cluster"
+    SERVICE_NAME: "todo-web-app-service"
+    TASK_DEF_FAMILY: "todo-web-app-task"
 
 phases:
   pre_build:
@@ -61,5 +61,5 @@ artifacts:
   base-directory: .  # Current directory (root of CodeBuild environment)
   discard-paths: yes
   s3:
-    bucket: nodejsmtatodoapp
-    path: nodejsmtatodoapp/todo-app  # Directory inside your S3 bucket
+    bucket: nodejsmtatodoappcodepipleline
+    path: nodejsmtatodoappcodepipleline/todo-app  # Directory inside your S3 bucket
