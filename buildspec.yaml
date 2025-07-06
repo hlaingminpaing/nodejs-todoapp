@@ -1,7 +1,7 @@
 version: 0.2
 env:
   variables:
-    AWS_ACCOUNT_ID: "965080479351"
+    AWS_ACCOUNT_ID: "537467926164"
     AWS_DEFAULT_REGION: "ap-southeast-1"
     IMAGE_REPO_NAME: "todo-web-app"
     ECS_CLUSTER: "todo-app-cluster"
@@ -61,5 +61,5 @@ artifacts:
   base-directory: .  # Current directory (root of CodeBuild environment)
   discard-paths: yes
   s3:
-    bucket: nodejsmtatodoappcodepipleline
-    path: nodejsmtatodoappcodepipleline/todo-app  # Directory inside your S3 bucket
+    bucket: nodejsmtatodoappcodepipleline1
+    path: nodejsmtatodoappcodepipleline1/todo-app  # Directory inside your S3 bucket
