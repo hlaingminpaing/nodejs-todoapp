@@ -46,7 +46,7 @@ phases:
       - aws ecs register-task-definition --cli-input-json file://task-definition-temp.json
 
       - echo Updating ECS Service with new task definition...
-      - NEW_TASK_DEF_ARN=$(aws ecs list-task-definitions --sort DESC --region $AWS_REGION --query "taskDefinitionArns[0]" --output text)
+      - NEW_TASK_DEF_ARN=$(aws ecs list-task-definitions --sort DESC --region $AWS_DEFAULT_REGION --query "taskDefinitionArns[0]" --output text)
       - echo $NEW_TASK_DEF_ARN
       ########Test complete#######
       # - echo Tests Complete

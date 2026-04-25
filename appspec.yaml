@@ -1,23 +1,17 @@
 version: 0.0
+
 Resources:
   - TargetService:
       Type: AWS::ECS::Service
       Properties:
-        # The ECS service name to update
         TaskDefinition: "arn:aws:ecs:ap-southeast-1:203918878350:task-definition/todo-web-app-task"
         LoadBalancerInfo:
           ContainerName: "nodejs-todoapp"
           ContainerPort: 3000
-# hooks:
-#   BeforeInstall:
-#     - location: scripts/before-install.sh
-#       timeout: 300
-#       runas: root
-#   AfterInstall:
-#     - location: scripts/docker-cleanup.sh
-#       timeout: 180
-#       runas: root
-#   AfterAllowTestTraffic:
-#     - location: scripts/health-check.sh
-#       timeout: 300
-#       runas: root
+        PlatformVersion: "1.4.0"
+
+Hooks:
+  - BeforeInstall: "BeforeInstall"
+  - AfterInstall: "AfterInstall"
+  - BeforeAllowTraffic: "BeforeAllowTraffic"
+  - AfterAllowTraffic: "AfterAllowTraffic"
