@@ -1,0 +1,37 @@
+# Local run with PostgreSQL:   docker compose up -d --build   ->  http://localhost:3000
+# Data survives restarts (volume todo-pgdata).  docker compose down -v  deletes it.
+services:
+  db:
+    image: postgres:18.6-alpine
+    environment:
+      POSTGRES_DB: todo
+      POSTGRES_USER: todo
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-todo-local-only}
+    volumes:
+      - todo-pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U todo -d todo"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    ports:
+      - "127.0.0.1:5433:5432"          # optional: psql/pgAdmin from your PC (5433 avoids clashes)
+
+  app:
+    build: .
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: todo
+      DB_USER: todo
+      DB_PASSWORD: ${DB_PASSWORD:-todo-local-only}
+      DB_SSL: disable
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  todo-pgdata:

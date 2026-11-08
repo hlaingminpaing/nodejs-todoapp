@@ -1,0 +1,14 @@
+# never copy the host's node_modules into the image (npm ci builds it inside)
+node_modules
+npm-debug.log
+.git
+.github
+.env
+*.md
+lab-note
+scripts
+buildspec.yaml
+appspec.yaml
+task-definition*.json
+task-definition*.yaml
+compose.yaml

@@ -2,6 +2,9 @@
 
 A simple To-Do web application built with Node.js, Express, and EJS, fully containerized and ready for AWS deployment via CodeBuild, CodeDeploy, and CodePipeline.
 
+> **Database:** todos are stored in **PostgreSQL** — locally in a Docker Compose container, on AWS in **Amazon RDS**.
+> Setup, configuration and the RDS console guide: **[RDS_SETUP.md](RDS_SETUP.md)**.
+
 ## Table of Contents
 - [Local Development](#local-development)
 - [Docker Setup](#docker-setup)
@@ -20,11 +23,11 @@ A simple To-Do web application built with Node.js, Express, and EJS, fully conta
 ### Quick Start
 
 ```bash
-npm install
-npm start
+docker compose up -d --build      # app + PostgreSQL
 ```
 
-The app will be available at `http://localhost:3000`
+The app will be available at `http://localhost:3000` (health: `/health`). Running `npm start` directly needs a
+PostgreSQL database and the `DB_*` environment variables — see [RDS_SETUP.md](RDS_SETUP.md#1-run-locally-with-docker-compose).
 
 ### Requirements
 - Node.js 20+
@@ -41,6 +44,8 @@ docker build -t todo-web-app .
 ```
 
 ### Run Docker Container
+
+> The container needs a PostgreSQL database (`DB_*` variables). Easiest: `docker compose up -d --build` (see [RDS_SETUP.md](RDS_SETUP.md)). The plain `docker run` below only works with `-e DB_HOST=... -e DB_USER=... -e DB_PASSWORD=... -e DB_NAME=...` added.
 
 ```bash
 docker run -p 3000:3000 todo-web-app
@@ -290,6 +295,11 @@ Configure these in **buildspec.yaml** and CodeBuild project:
 | `ECS_CLUSTER` | `todo-app-cluster` | ECS cluster name |
 | `SERVICE_NAME` | `todo-web-app-service1` | ECS service name |
 | `TASK_DEF_FAMILY` | `todo-web-app-task` | ECS task definition name |
+| `DB_HOST` | RDS endpoint | Database host written into the task definition |
+| `DB_SECRET_ARN` | RDS-managed secret ARN | Source of `DB_USER` / `DB_PASSWORD` (task definition `secrets`) |
+
+Application (container) variables: `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `DB_SSL`, `DB_POOL_MAX`, `PORT` —
+details in [RDS_SETUP.md](RDS_SETUP.md#environment-variables).
 
 ---
 

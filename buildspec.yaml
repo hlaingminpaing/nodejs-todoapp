@@ -7,6 +7,9 @@ env:
     ECS_CLUSTER: "todo-app-cluster"
     SERVICE_NAME: "todo-web-app-service1"
     TASK_DEF_FAMILY: "todo-web-app-task"
+    # RDS (see RDS_SETUP.md): endpoint and the ARN of the RDS-managed master-user secret
+    DB_HOST: "todo-db.xxxxxxxxxxxx.ap-southeast-1.rds.amazonaws.com"
+    DB_SECRET_ARN: "arn:aws:secretsmanager:ap-southeast-1:203918878350:secret:rds!db-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx-XXXXXX"
 
 phases:
   pre_build:
@@ -31,7 +34,7 @@ phases:
       - echo Pushing the Docker image...
       - docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$IMAGE_REPO_NAME:$IMAGE_TAG
       - echo Writing image definitions...
-      - printf '[{"name":"todo-app","imageUri":"%s"}]' $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$IMAGE_REPO_NAME:$IMAGE_TAG > imagedefinitions.json
+      - printf '[{"name":"nodejs-todoapp","imageUri":"%s"}]' $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$IMAGE_REPO_NAME:$IMAGE_TAG > imagedefinitions.json
       - echo Preparing task definition file...
       - cp task-definition.json task-definition-temp.json
       - sed -i "s|\$AWS_ACCOUNT_ID|$AWS_ACCOUNT_ID|g" task-definition-temp.json
@@ -39,6 +42,8 @@ phases:
       - sed -i "s|\$IMAGE_REPO_NAME|$IMAGE_REPO_NAME|g" task-definition-temp.json
       - sed -i "s|\$IMAGE_TAG|$IMAGE_TAG|g" task-definition-temp.json
       - sed -i "s|\$TASK_DEF_FAMILY|$TASK_DEF_FAMILY|g" task-definition-temp.json
+      - sed -i "s|\$DB_HOST|$DB_HOST|g" task-definition-temp.json
+      - sed -i "s|\$DB_SECRET_ARN|$DB_SECRET_ARN|g" task-definition-temp.json
       # Output the contents for debugging
       - echo "Contents of task-definition-temp.json:"
       - cat task-definition-temp.json

@@ -6,7 +6,7 @@
     ],
     "cpu": "256",
     "memory": "512",
-    "executionRoleArn": "arn:aws:iam::203918878350:role/ecsTaskExecutionRole",
+    "executionRoleArn": "arn:aws:iam::$AWS_ACCOUNT_ID:role/ecsTaskExecutionRole",
     "containerDefinitions": [
       {
         "name": "nodejs-todoapp",
@@ -18,8 +18,33 @@
             "hostPort": 3000,
             "protocol": "tcp"
           }
-        ]
+        ],
+        "environment": [
+          { "name": "DB_HOST", "value": "$DB_HOST" },
+          { "name": "DB_PORT", "value": "5432" },
+          { "name": "DB_NAME", "value": "todo" },
+          { "name": "DB_SSL", "value": "verify-full" },
+          { "name": "DB_POOL_MAX", "value": "5" }
+        ],
+        "secrets": [
+          { "name": "DB_USER", "valueFrom": "$DB_SECRET_ARN:username::" },
+          { "name": "DB_PASSWORD", "valueFrom": "$DB_SECRET_ARN:password::" }
+        ],
+        "healthCheck": {
+          "command": ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:3000/health || exit 1"],
+          "interval": 30,
+          "timeout": 5,
+          "retries": 3,
+          "startPeriod": 30
+        },
+        "logConfiguration": {
+          "logDriver": "awslogs",
+          "options": {
+            "awslogs-group": "/ecs/todo-web-app",
+            "awslogs-region": "$AWS_DEFAULT_REGION",
+            "awslogs-stream-prefix": "app"
+          }
+        }
       }
     ]
   }
-  
