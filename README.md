@@ -10,7 +10,8 @@ A simple To-Do web application built with Node.js, Express, and EJS, fully conta
 - [Docker Setup](#docker-setup)
 - [AWS CI/CD Architecture](#aws-cicd-architecture)
 - [Prerequisites](#prerequisites)
-- [AWS Setup Guide](#aws-setup-guide)
+- [AWS Setup Guide](#aws-setup-guide) (ECS + RDS PostgreSQL, Steps 1–12)
+- [RDS details, local database, checking data](RDS_SETUP.md)
 - [CI/CD Pipeline Configuration](#cicd-pipeline-configuration)
 - [Deployment Instructions](#deployment-instructions)
 - [Environment Variables](#environment-variables)
@@ -63,30 +64,29 @@ docker ps
 
 ## AWS CI/CD Architecture
 
-This repository is configured for a complete AWS CI/CD pipeline:
+This repository is configured for a complete AWS CI/CD pipeline. The application runs on **ECS Fargate** behind an
+**Application Load Balancer** and stores its data in **Amazon RDS for PostgreSQL**:
 
 ```
-GitHub/CodeCommit Repository
-        ↓
-   AWS CodePipeline
-        ↓
-   AWS CodeBuild (Build & Push Docker Image)
-        ↓
-   Amazon ECR (Docker Image Registry)
-        ↓
-   AWS CodeDeploy (Update ECS Service)
-        ↓
-   Amazon ECS Fargate (Run Application)
+GitHub/CodeCommit ─► CodePipeline ─► CodeBuild (build image, push to ECR, register task definition) ─► CodeDeploy
+                                                                                                         │
+Internet ─► Application Load Balancer :80 ─► ECS Fargate service "todo-web-app-service1" (container :3000) ◄┘
+                                                  │  TLS :5432                       ▲ DB_USER / DB_PASSWORD at task start
+                                                  ▼                                  │
+                                       Amazon RDS for PostgreSQL "todo-db"     AWS Secrets Manager (secret managed by RDS)
 ```
 
 ### Components Overview
 
 | Component | Purpose | Config File |
 |-----------|---------|-------------|
-| **CodeBuild** | Builds Docker image, runs tests, pushes to ECR, updates task definition | `buildspec.yaml` |
+| **CodeBuild** | Builds Docker image, pushes to ECR, fills and registers the task definition | `buildspec.yaml` |
 | **CodeDeploy** | Updates ECS service with new task definition | `appspec.yaml` |
 | **ECS Fargate** | Runs containerized application | `task-definition.json` |
 | **ECR** | Stores Docker images | AWS Console |
+| **RDS for PostgreSQL** | Stores the todos (table `todos`, created by the app on first start) | AWS Console |
+| **Secrets Manager** | Holds the database user/password (created and rotated by RDS), injected into the container | `task-definition.json` (`secrets`) |
+| **CloudWatch Logs** | Application logs (`/ecs/todo-web-app`) | `task-definition.json` |
 
 ---
 
@@ -94,12 +94,11 @@ GitHub/CodeCommit Repository
 
 Before setting up the CI/CD pipeline, ensure you have:
 
-1. **AWS Account** with appropriate permissions
-2. **IAM Roles** created:
-   - `CodeBuildServiceRole` - for CodeBuild to access ECR and ECS
-   - `ecsTaskExecutionRole` - for ECS tasks to pull images from ECR
-3. **S3 Bucket** - for storing pipeline artifacts
-4. **VPC and Security Groups** - for ECS Fargate networking
+1. **AWS Account** with appropriate permissions; region used below: **ap-southeast-1 (Singapore)**
+2. **VPC** with subnets in **at least 2 Availability Zones** (the ALB and the RDS subnet group both need 2 AZs) — the default VPC works
+3. **Docker** and **AWS CLI v2** on your machine (for manual builds and checks)
+
+Order of the steps below: network/security groups → database → permissions → registry/logs → cluster → task definition → load balancer → service → pipeline.
 
 ---
 
@@ -119,18 +118,71 @@ Before setting up the CI/CD pipeline, ensure you have:
 5. Name it `CodeBuildServiceRole` → **Create role**
 
 #### Create ECS Task Execution Role
-1. Create another role with trust entity: **Elastic Container Service Task**
-2. Attach policy: `AmazonEC2ContainerRegistryReadOnlyAccess`
+1. Create another role with trust entity: **Elastic Container Service** → **Elastic Container Service Task**
+2. Attach policy: **`AmazonECSTaskExecutionRolePolicy`** (pull images from ECR **and** write CloudWatch logs)
 3. Name it `ecsTaskExecutionRole` → **Create role**
+4. The permission to read the database secret is added in [Step 4](#step-4-allow-ecs-to-read-the-database-secret) (the secret exists only after Step 3).
 
-### Step 2: Create ECR Repository
+### Step 2: Create Security Groups
 
-1. Go to [Amazon ECR Console](https://console.aws.amazon.com/ecr/home)
-2. Click **Create repository**
-3. Repository name: `todo-web-app`
-4. Click **Create repository**
+**EC2 → Security Groups → Create security group** (all in the same VPC):
 
-### Step 3: Create ECS Cluster
+| Name | Inbound rule | Used by |
+|------|--------------|---------|
+| `todo-alb-sg` | HTTP **80** from `0.0.0.0/0` | Application Load Balancer |
+| `todo-tasks-sg` | Custom TCP **3000** from **`todo-alb-sg`** | ECS tasks |
+| `todo-db-sg` | PostgreSQL **5432** from **`todo-tasks-sg`** | RDS database |
+
+Outbound: keep the default (all). Result: the internet can reach only the load balancer, the load balancer only the tasks,
+and only the tasks can reach the database.
+
+### Step 3: Create the RDS PostgreSQL Database
+
+1. Go to [Amazon RDS Console](https://console.aws.amazon.com/rds/home) → **Databases** → **Create database**
+2. **Standard create** → Engine **PostgreSQL** → Engine version: latest **PostgreSQL 18.x**
+3. Templates: **Free tier** (if offered) or **Dev/Test** → Availability: **Single-AZ DB instance**
+4. Settings:
+   - **DB instance identifier**: `todo-db`
+   - **Master username**: `todoadmin`
+   - **Credentials management**: **Managed in AWS Secrets Manager** (RDS generates, stores and rotates the password)
+5. Instance configuration: **Burstable classes** → **db.t4g.micro** · Storage: **gp3, 20 GiB**
+6. Connectivity:
+   - **Don't connect to an EC2 compute resource**
+   - **VPC**: your VPC · **DB subnet group**: Create new
+   - **Public access**: **No**
+   - **VPC security group**: Choose existing → **`todo-db-sg`** (remove `default`)
+7. **Additional configuration** → **Initial database name**: **`todo`** (required — the app connects to this database) ·
+   Backup retention 1–7 days
+8. **Create database** → wait for Status **Available** (≈ 10–15 min)
+9. Write down two values (needed in Steps 4, 8 and in `buildspec.yaml`):
+   - **Endpoint** (Connectivity & security tab), e.g. `todo-db.abc123xyz.ap-southeast-1.rds.amazonaws.com` → `DB_HOST`
+   - **Master credentials ARN** (Configuration tab; also in Secrets Manager as `rds!db-...`) → `DB_SECRET_ARN`
+
+The app creates the `todos` table itself on first start. TLS is enforced by RDS; the app connects with `DB_SSL=verify-full`
+using the Amazon RDS CA bundle that the `Dockerfile` puts into the image.
+
+### Step 4: Allow ECS to Read the Database Secret
+
+**IAM → Roles → `ecsTaskExecutionRole` → Add permissions → Create inline policy → JSON**:
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [{
+    "Effect": "Allow",
+    "Action": "secretsmanager:GetSecretValue",
+    "Resource": "<DB_SECRET_ARN from Step 3>"
+  }]
+}
+```
+Policy name: `read-todo-db-secret` → **Create policy**.
+
+### Step 5: Create ECR Repository and Log Group
+
+1. Go to [Amazon ECR Console](https://console.aws.amazon.com/ecr/home) → **Create repository** → name `todo-web-app` → **Create repository**
+2. Go to **CloudWatch → Log groups → Create log group** → name **`/ecs/todo-web-app`** (retention e.g. 7 days)
+   (the task definition sends logs there; the execution role can write to it but not create it)
+
+### Step 6: Create ECS Cluster
 
 1. Go to [Amazon ECS Console](https://console.aws.amazon.com/ecs/home)
 2. Click **Create cluster**
@@ -138,41 +190,82 @@ Before setting up the CI/CD pipeline, ensure you have:
 4. **Infrastructure**: Select **AWS Fargate**
 5. Click **Create**
 
-### Step 4: Create ECS Task Definition
+### Step 7: Build and Push the First Image
 
-1. Go to [Task Definitions](https://console.aws.amazon.com/ecs/home#/taskDefinitions)
-2. Click **Create new task definition**
-3. Fill in:
+```bash
+aws ecr get-login-password --region ap-southeast-1 | \
+  docker login --username AWS --password-stdin YOUR_ACCOUNT_ID.dkr.ecr.ap-southeast-1.amazonaws.com
+docker build --platform linux/amd64 -t YOUR_ACCOUNT_ID.dkr.ecr.ap-southeast-1.amazonaws.com/todo-web-app:v1 .
+docker push YOUR_ACCOUNT_ID.dkr.ecr.ap-southeast-1.amazonaws.com/todo-web-app:v1
+```
+(Later builds are done by CodeBuild with a timestamp tag.)
+
+### Step 8: Create ECS Task Definition
+
+1. Go to [Task Definitions](https://console.aws.amazon.com/ecs/home#/taskDefinitions) → **Create new task definition**
+2. Fill in:
    - **Family name**: `todo-web-app-task`
-   - **Container name**: `nodejs-todoapp`
-   - **Image**: `<AWS_ACCOUNT_ID>.dkr.ecr.<REGION>.amazonaws.com/todo-web-app:latest`
-   - **Container port**: `3000`
+   - **Launch type**: AWS Fargate · **OS/Architecture**: Linux/X86_64 · **CPU** .25 vCPU · **Memory** .5 GB
    - **Task execution role**: `ecsTaskExecutionRole`
-   - **CPU**: 256
-   - **Memory**: 512
-4. Click **Create**
+   - **Container name**: `nodejs-todoapp`
+   - **Image**: `<AWS_ACCOUNT_ID>.dkr.ecr.ap-southeast-1.amazonaws.com/todo-web-app:v1`
+   - **Container port**: `3000` (TCP)
+   - **Environment variables** (key / value):
 
-**Or use the provided `task-definition.json`** (update account ID and region)
+     | Key | Value type | Value |
+     |-----|------------|-------|
+     | `DB_HOST` | Value | `<DB_HOST from Step 3>` |
+     | `DB_PORT` | Value | `5432` |
+     | `DB_NAME` | Value | `todo` |
+     | `DB_SSL` | Value | `verify-full` |
+     | `DB_USER` | **ValueFrom** | `<DB_SECRET_ARN>:username::` |
+     | `DB_PASSWORD` | **ValueFrom** | `<DB_SECRET_ARN>:password::` |
 
-### Step 5: Create ECS Service
+   - **Health check**: command `CMD-SHELL, wget -q -O /dev/null http://127.0.0.1:3000/health || exit 1`, interval 30, timeout 5, retries 3, start period 30
+   - **Log collection**: Amazon CloudWatch, log group `/ecs/todo-web-app`
+3. Click **Create**
+
+**Or use the provided `task-definition.json`**: CodeBuild fills the `$...` placeholders (account, region, image, family,
+`DB_HOST`, `DB_SECRET_ARN`) and registers it — see [CI/CD Pipeline Configuration](#cicd-pipeline-configuration).
+
+### Step 9: Create the Load Balancer
+
+1. **EC2 → Target Groups → Create target group**: target type **IP addresses**, name `todo-tg-1`, protocol **HTTP**, port **3000**,
+   your VPC, health check path **`/health`** (returns 200 only when the database answers) → do not register targets → **Create**
+2. For **CodeDeploy blue/green** create a second, identical target group `todo-tg-2`
+3. **EC2 → Load Balancers → Create → Application Load Balancer**: name `todo-alb`, **Internet-facing**, your VPC, **2 public
+   subnets**, security group **`todo-alb-sg`**, listener **HTTP:80 → forward to `todo-tg-1`** → **Create**
+
+### Step 10: Create ECS Service
 
 1. Go to your **ECS Cluster** → **Services** → **Create**
 2. Fill in:
    - **Launch type**: Fargate
-   - **Task definition**: `todo-web-app-task`
+   - **Task definition**: `todo-web-app-task` (latest revision)
    - **Service name**: `todo-web-app-service1`
-   - **Desired count**: 1
-   - **VPC**: Select your VPC
-   - **Subnets**: Select public subnets
-   - **Security group**: Allow inbound HTTP (port 3000)
-3. Click **Create service**
+   - **Desired count**: 1 (try 2 later: both tasks share the same data in RDS)
+   - **Deployment type**: Rolling update, or **Blue/green (CodeDeploy)** if you use the CodeDeploy stage
+   - **VPC**: your VPC · **Subnets**: public subnets with **Public IP turned on** (or private subnets with a NAT Gateway) —
+     tasks must reach ECR, CloudWatch Logs and **Secrets Manager** when they start
+   - **Security group**: **`todo-tasks-sg`** only
+   - **Load balancing**: Application Load Balancer → existing `todo-alb` → listener 80 → target group `todo-tg-1`
+     (blue/green: production listener 80, target groups `todo-tg-1` / `todo-tg-2`)
+3. Click **Create service** → wait until the task is **Running** and the target is **healthy**
 
-### Step 6: Create S3 Bucket for Artifacts
+### Step 11: Create S3 Bucket for Artifacts
 
 1. Go to [Amazon S3 Console](https://console.aws.amazon.com/s3/)
 2. Click **Create bucket**
 3. **Bucket name**: `nodejsmtatodoappcodepipleline12` (or your preferred name)
 4. Click **Create bucket**
+
+### Step 12: Verify
+
+1. Open `http://<todo-alb DNS name>` → add, complete and delete todos
+2. `http://<todo-alb DNS name>/health` → `{"status":"ok","database":"up","host":"ip-10-..."}`
+3. **Data survives deployments:** service → **Update service → Force new deployment** → todos are still there after the new task starts
+4. **CloudWatch → Log groups → `/ecs/todo-web-app`** → `Connected to PostgreSQL database "todo" (PostgreSQL 18.x ...)`
+5. Look at the rows in the database: [RDS_SETUP.md → Look at the data](RDS_SETUP.md#look-at-the-data)
 
 ---
 
@@ -197,7 +290,11 @@ IMAGE_REPO_NAME: "todo-web-app"
 ECS_CLUSTER: "todo-app-cluster"
 SERVICE_NAME: "todo-web-app-service1"
 TASK_DEF_FAMILY: "todo-web-app-task"
+DB_HOST: "todo-db.abc123xyz.ap-southeast-1.rds.amazonaws.com"     # RDS endpoint (Step 3)
+DB_SECRET_ARN: "arn:aws:secretsmanager:ap-southeast-1:<acct>:secret:rds!db-..."   # RDS-managed secret (Step 3)
 ```
+`DB_HOST` and `DB_SECRET_ARN` are not secret themselves (the ARN only points to the secret); CodeBuild writes them into
+`task-definition.json`. The password never appears in the repository, the image or the build logs.
 
 ### CodeDeploy Configuration (appspec.yaml)
 
@@ -267,12 +364,22 @@ aws ecr get-login-password --region ap-southeast-1 | \
   docker login --username AWS --password-stdin YOUR_ACCOUNT_ID.dkr.ecr.ap-southeast-1.amazonaws.com
 
 # Build and push
-docker build -t todo-web-app:latest .
-docker tag todo-web-app:latest YOUR_ACCOUNT_ID.dkr.ecr.ap-southeast-1.amazonaws.com/todo-web-app:latest
-docker push YOUR_ACCOUNT_ID.dkr.ecr.ap-southeast-1.amazonaws.com/todo-web-app:latest
+TAG=$(date +%Y%m%d%H%M%S)
+docker build --platform linux/amd64 -t YOUR_ACCOUNT_ID.dkr.ecr.ap-southeast-1.amazonaws.com/todo-web-app:$TAG .
+docker push YOUR_ACCOUNT_ID.dkr.ecr.ap-southeast-1.amazonaws.com/todo-web-app:$TAG
 ```
 
-#### Update ECS Service
+#### Register a Task Definition Revision and Update the Service
+Create a new revision in the console with the new image (keep the `DB_*` variables from Step 8), or fill
+`task-definition.json` like CodeBuild does and register it (`set +H` first: the secret ARN contains `!`, which
+interactive bash would otherwise expand inside double quotes):
+```bash
+set +H
+sed -e "s|\$AWS_ACCOUNT_ID|YOUR_ACCOUNT_ID|g" -e "s|\$AWS_DEFAULT_REGION|ap-southeast-1|g" \
+    -e "s|\$IMAGE_REPO_NAME|todo-web-app|g" -e "s|\$IMAGE_TAG|$TAG|g" -e "s|\$TASK_DEF_FAMILY|todo-web-app-task|g" \
+    -e "s|\$DB_HOST|<DB_HOST>|g" -e "s|\$DB_SECRET_ARN|<DB_SECRET_ARN>|g" task-definition.json > task-definition-temp.json
+aws ecs register-task-definition --cli-input-json file://task-definition-temp.json --region ap-southeast-1
+```
 ```bash
 aws ecs update-service \
   --cluster todo-app-cluster \
@@ -338,6 +445,20 @@ details in [RDS_SETUP.md](RDS_SETUP.md#environment-variables).
 - Review CodeDeploy deployment events
 - Verify S3 artifact bucket exists and is accessible
 
+### Database (RDS) Issues
+
+| Log message (`/ecs/todo-web-app`) or task error | Fix |
+|---|---|
+| `ResourceInitializationError: unable to pull secrets` | Step 4 policy missing/wrong ARN, or tasks cannot reach Secrets Manager (public IP / NAT) |
+| `Missing environment variable DB_HOST` | task definition revision without the `DB_*` variables (Step 8) |
+| `Database not reachable ... ETIMEDOUT` | `todo-db-sg` must allow 5432 from `todo-tasks-sg`; RDS in the same VPC |
+| `password authentication failed` | wrong secret ARN, or password rotated → **Force new deployment** (secrets are read at task start) |
+| `database "todo" does not exist` | "Initial database name" was empty in Step 3 → create database `todo` |
+| `unable to verify the first certificate` | image built before the RDS CA bundle was added → rebuild |
+| Target group: unhealthy (503 on `/health`) | the task cannot reach the database — see the lines above |
+
+More: [RDS_SETUP.md → Troubleshooting](RDS_SETUP.md#troubleshooting).
+
 ### Health Check Issues
 
 **Error: `curl: (7) Failed to connect to localhost port 3000`**
@@ -356,16 +477,18 @@ details in [RDS_SETUP.md](RDS_SETUP.md#environment-variables).
   - Add todo items
   - Mark todos as completed
   - Delete todos
-  - In-memory storage (resets on restart)
+  - Data stored in PostgreSQL (Amazon RDS on AWS, a container locally) — survives restarts and deployments
+  - `/health` endpoint (checks the database)
 
 ## Next Steps
 
 1. Clone this repository
 2. Update AWS account ID and region in all config files
-3. Create IAM roles and AWS resources
-4. Push code to GitHub/CodeCommit
-5. Create CodePipeline
-6. Monitor deployments in AWS Console
+3. Create IAM roles and AWS resources, including the RDS database (Steps 1–11)
+4. Put `DB_HOST` and `DB_SECRET_ARN` into `buildspec.yaml`
+5. Push code to GitHub/CodeCommit
+6. Create CodePipeline
+7. Monitor deployments in AWS Console
 
 ---
 
